@@ -54,21 +54,33 @@ uploaded_file = st.file_uploader("Sube el archivo CSV del ensayo", type="csv")
 
 if uploaded_file:
     try:
-        # 1. Leemos el archivo. 
-        # header=1 asume que la fila 1 (Tiempo, Fuerza...) es el encabezado.
+        # 1. Cargamos el archivo saltando la primera fila de metadatos
+        # header=1 indica que los nombres están en la segunda fila
         df = pd.read_csv(uploaded_file, header=1, decimal=',', skipinitialspace=True)
         
-        # 2. LIMPIEZA CRÍTICA: Quitamos comillas y espacios de los nombres de las columnas
+        # 2. LIMPIEZA CRÍTICA: Eliminamos comillas dobles y espacios en blanco de los encabezados
         df.columns = df.columns.str.replace('"', '').str.strip()
         
-        # 3. Quitamos la fila de unidades (seg, N, mm) si existe
-        # Verificamos si la primera fila contiene texto (como 'N' o 'mm')
-        if not pd.to_numeric(df.iloc[0, 1], errors='coerce') >= 0:
-            df = df.iloc[1:].reset_index(drop=True)
-
-        # 4. Convertimos todo a números (por si hay decimales con coma mal leídos)
+        # 3. Eliminamos la fila de unidades ("seg", "N", "mm") que queda como primera fila de datos
+        df = df.iloc[1:].reset_index(drop=True)
+        
+        # 4. Convertimos a valores numéricos para poder operar matemáticamente
         df = df.apply(pd.to_numeric, errors='coerce').dropna()
+        
+        # Verificación de seguridad para el alumno
+        if 'Fuerza' not in df.columns:
+            st.error(f"No se detectó la columna 'Fuerza'. Columnas encontradas: {list(df.columns)}")
+            st.stop()
+            
+        st.success("Archivo cargado y columnas normalizadas correctamente.")
+        
+    except Exception as e:
+        st.error(f"Error al procesar el archivo: {e}")
+        st.stop()
 
+    # Ahora el cálculo de Tensión usará la columna limpia 'Fuerza'
+    df['Tension_MPa'] = df['Fuerza'] / s0
+    df['Deformacion_unit'] = df['Desplazamiento'] / l0
         # COMPROBACIÓN DE SEGURIDAD PARA EL ALUMNO
         if 'Fuerza' not in df.columns:
             st.error(f"❌ Error: No encuentro la columna 'Fuerza'. Columnas detectadas: {list(df.columns)}")
