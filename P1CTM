@@ -3,124 +3,109 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy import stats
-from scipy.interpolate import interp1d
 
-# Configuración de la página con identidad visual de la UVigo
-st.set_page_config(page_title="Analizador de Tracción - EEAE UVigo", layout="wide")
+# Configuración profesional de la página
+st.set_page_config(page_title="Analizador Materiales - UVigo", layout="wide")
 
-st.title("🚀 Analizador de Ensayos de Tracción - Materiales Aeroespaciales")
-st.subheader("Escola de Enxeñaría Aeronáutica e do Espazo | Universidade de Vigo")
+st.title("🛡️ Analizador Universal de Ensayos de Tracción")
+st.write("### Escuela de Ingeniería Aeroespacial | Universidade de Vigo")
 
-# --- SIDEBAR: DATOS DE LA PROBETA (SEGÚN FICHA CTM) ---
+# --- SIDEBAR: PARÁMETROS TÉCNICOS ---
 with st.sidebar:
-    st.header("Configuración de la Probeta")
-    tipo_probeta = st.selectbox("Geometría de la probeta", ["Cilíndrica", "Plana"])
-
-    if tipo_probeta == "Cilíndrica":
+    st.header("Configuración de Probeta")
+    material = st.text_input("Material", value="Aluminio 7075-T6")
+    tipo = st.selectbox("Geometría", ["Cilíndrica", "Plana"])
+    
+    if tipo == "Cilíndrica":
         d0 = st.number_input("Diámetro inicial d₀ (mm)", value=10.0)
         s0 = np.pi * (d0**2) / 4
     else:
         ancho = st.number_input("Ancho b (mm)", value=10.0)
         espesor = st.number_input("Espesor t (mm)", value=2.0)
         s0 = ancho * espesor
-
+        
     l0 = st.number_input("Longitud inicial L₀ (mm)", value=50.0)
-    lu = st.number_input("Longitud final tras rotura Lᵤ (mm)", value=55.0)
-    su = st.number_input("Sección final tras rotura Sᵤ (mm²)", value=s0*0.8)
-    material = st.text_input("Identificación del Material", "Aluminio 7075-T6")
+    lu = st.number_input("Longitud final Lᵤ (mm)", value=55.4)
+    st.info(f"Sección Calculada S₀: {s0:.2f} mm²")
 
-    st.divider()
-    st.info(f"**Sección Inicial S₀:** {s0:.2f} mm²")
-
-# --- CARGA Y PROCESAMIENTO ROBUSTO DEL CSV ---
-st.write("### 1. Carga de Datos del Ensayo")
-uploaded_file = st.file_uploader("Sube el archivo CSV (Formato máquina UVigo)", type=["csv"])
+# --- CARGA Y LIMPIEZA AGRESIVA DE DATOS ---
+uploaded_file = st.file_uploader("Sube tu archivo CSV del laboratorio", type="csv")
 
 if uploaded_file:
     try:
-        # Leemos saltando la primera fila de metadatos. Decimales con coma.
-        df = pd.read_csv(uploaded_file, header=1, decimal=',', skipinitialspace=True)
+        # 1. Leemos el archivo completo como texto para limpiar caracteres extraños
+        raw_data = uploaded_file.getvalue().decode("utf-8").splitlines()
         
-        # RENOMBRADO POR POSICIÓN: Evita el KeyError: 'Fuerza'
-        # Fuerza es la columna 1, Desplazamiento es la 2.
-        df.columns = ['Tiempo', 'Fuerza', 'Desplazamiento']
+        # 2. Buscamos la primera línea que realmente contenga datos numéricos
+        data_rows = []
+        for line in raw_data:
+            # Limpiamos comillas y espacios, y cambiamos coma decimal por punto
+            clean_line = line.replace('"', '').replace(',', '.')
+            parts = clean_line.split('.') # Intentamos ver si hay puntos decimales
+            # Si la línea tiene al menos un número tras limpiar, la guardamos
+            if any(c.isdigit() for c in clean_line):
+                # Intentamos separar por comas (formato CSV)
+                row = [p.strip() for p in clean_line.split(',')]
+                # Solo guardamos si tiene al menos 3 columnas (Tiempo, Fuerza, Despl)
+                if len(row) >= 3:
+                    try:
+                        # Comprobamos si el primer elemento es un número
+                        float(row[0])
+                        data_rows.append([float(r) for r in row[:3]])
+                    except:
+                        continue
         
-        # Eliminamos la fila de unidades (seg, N, mm)
-        df = df.iloc[1:].reset_index(drop=True)
+        # 3. Creamos el DataFrame final por posición
+        df = pd.DataFrame(data_rows, columns=['Tiempo', 'Fuerza', 'Desplazamiento'])
         
-        # Convertimos todo a numérico
-        df = df.apply(pd.to_numeric, errors='coerce').dropna()
-        
-        st.success("✅ Datos cargados correctamente. Columnas identificadas por posición.")
-        
-    except Exception as e:
-        st.error(f"Error al procesar el archivo: {e}")
-        st.stop()
+        if df.empty:
+            st.error("No se detectaron datos válidos. Comprueba que el CSV tiene 3 columnas numéricas.")
+            st.stop()
+            
+        st.success(f"✅ Se han procesado {len(df)} puntos de datos correctamente.")
 
-    # --- CÁLCULOS TÉCNICOS (FICHA CTM) ---
-    # Tensión (σ) = Fuerza / S0
-    df['Tension_MPa'] = df['Fuerza'] / s0
-    # Deformación (ε) = ΔL / L0
-    df['Deformacion_unit'] = df['Desplazamiento'] / l0
-    
-    # 1. Resistencia a la tracción (Rm)
-    rm = df['Tension_MPa'].max()
-    idx_max = df['Tension_MPa'].idxmax()
-    agt = df.loc[idx_max, 'Deformacion_unit'] * 100 # % bajo carga máxima
-    
-    # 2. Módulo de Young (E) - Regresión en la zona inicial
-    zona_elastica = df.iloc[:int(len(df)*0.08)] 
-    slope, _, _, _, _ = stats.linregress(zona_elastica['Deformacion_unit'], zona_elastica['Tension_MPa'])
-    e_young = slope # MPa
-    
-    # 3. Límite Elástico Rp0.2 (Paralela al 0.2%)
-    offset = 0.002
-    try:
-        linea_offset = e_young * (df['Deformacion_unit'] - offset)
-        idx_p02 = np.argwhere(np.diff(np.sign(df['Tension_MPa'] - linea_offset))).flatten()[0]
-        rp02 = df.loc[idx_p02, 'Tension_MPa']
-        eps_p02 = df.loc[idx_p02, 'Deformacion_unit']
-    except:
-        rp02 = rm * 0.85 # Estimación si falla la intersección
-        eps_p02 = (rp02/e_young) + offset
-
-    # 4. Alargamiento a rotura (A %) y Estricción (Z %)
-    a_porc = ((lu - l0) / l0) * 100
-    z_porc = ((s0 - su) / s0) * 100
-
-    # --- VISUALIZACIÓN ---
-    col1, col2 = st.columns([2, 1])
-
-    with col1:
-        st.subheader("Gráfica: Diagrama Tensión-Deformación")
-        fig, ax = plt.subplots(figsize=(10, 6))
-        ax.plot(df['Deformacion_unit'], df['Tension_MPa'], label='Curva de Ensayo', color='#004b87', lw=2)
+        # --- CÁLCULOS DE INGENIERÍA ---
+        df['Tension_MPa'] = df['Fuerza'] / s0
+        df['Deformacion_unit'] = df['Desplazamiento'] / l0
         
-        # Dibujar Rp0.2
-        ax.plot(df['Deformacion_unit'], e_young*(df['Deformacion_unit']-0.002), '--', color='gray', alpha=0.5, label='Línea Offset 0.2%')
-        ax.scatter(eps_p02, rp02, color='red', s=50, zorder=5, label=f'Rp0.2: {rp02:.1f} MPa')
+        # Rm (Resistencia máxima)
+        rm = df['Tension_MPa'].max()
+        idx_max = df['Tension_MPa'].idxmax()
         
-        # Dibujar Rm
-        ax.scatter(df.loc[idx_max, 'Deformacion_unit'], rm, color='green', s=50, zorder=5, label=f'Rm: {rm:.1f} MPa')
+        # Módulo de Young (E) - Tomamos el primer 10% de la curva
+        limit = int(len(df) * 0.1)
+        slope, intercept, r_val, p_val, std_err = stats.linregress(
+            df['Deformacion_unit'].iloc[:limit], 
+            df['Tension_MPa'].iloc[:limit]
+        )
+        e_young_gpa = slope / 1000 # Convertir MPa a GPa
+
+        # --- REPRESENTACIÓN GRÁFICA ---
+        st.subheader("Curva Tensión-Deformación (Ingeniería)")
+        
+        fig, ax = plt.subplots(figsize=(10, 5))
+        ax.plot(df['Deformacion_unit'], df['Tension_MPa'], label='Ensayo Real', color='#004b87', lw=2)
+        
+        # Punto Rm
+        ax.scatter(df['Deformacion_unit'].iloc[idx_max], rm, color='red', zorder=5)
+        ax.annotate(f'Rm: {rm:.1f} MPa', 
+                    (df['Deformacion_unit'].iloc[idx_max], rm), 
+                    textcoords="offset points", xytext=(0,10), ha='center')
         
         ax.set_xlabel("Deformación Unitaria ε (mm/mm)")
         ax.set_ylabel("Tensión σ (MPa)")
-        ax.set_ylim(0, rm * 1.15)
-        ax.set_xlim(0, df['Deformacion_unit'].max() * 1.05)
-        ax.legend()
         ax.grid(True, linestyle=':', alpha=0.6)
+        ax.legend()
         st.pyplot(fig)
 
-    with col2:
-        st.subheader("Informe de Resultados")
-        res_df = pd.DataFrame({
-            "Propiedad Mecánica": ["Módulo de Young (E)", "Límite Elástico (Rp0.2)", "Resistencia Máxima (Rm)", "Alargamiento (A)", "Estricción (Z)"],
-            "Unidad": ["GPa", "MPa", "MPa", "%", "%"],
-            "Resultado": [f"{e_young/1000:.1f}", f"{rp02:.1f}", f"{rm:.1f}", f"{a_porc:.1f}", f"{z_porc:.1f}"]
-        })
-        st.table(res_df)
+        # --- TABLA DE RESULTADOS ---
+        st.subheader("Resultados del Informe")
+        a_porc = ((lu - l0) / l0) * 100
         
-        st.download_button("Descargar Datos Procesados (CSV)", df.to_csv(index=False), "resultados_ensayo.csv", "text/csv")
+        res_col1, res_col2, res_col3 = st.columns(3)
+        res_col1.metric("Módulo de Young (E)", f"{e_young_gpa:.1f} GPa")
+        res_col2.metric("Resistencia Máxima (Rm)", f"{rm:.1f} MPa")
+        res_col3.metric("Alargamiento (A)", f"{a_porc:.1f} %")
 
-else:
-    st.info("👋 Sube el archivo de la máquina de ensayos para generar el análisis automático.")
+    except Exception as e:
+        st.error(f"Fallo crítico en el procesamiento: {e}")
