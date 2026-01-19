@@ -1,0 +1,93 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy import stats
+from scipy.interpolate import interp1d
+
+# Configuración de la página
+st.set_page_config(page_title="Analizador EEAE UVigo", layout="wide")
+
+st.title("🚀 Analizador de Ensayos de Tracción - EEAE")
+st.write("Configurado para el formato de salida de la máquina de ensayos (PLA_1H3.csv)")
+
+# --- BARRA LATERAL: ENTRADA DE DATOS DE LA FICHA CTM ---
+with st.sidebar:
+    st.header("Datos de la Probeta")
+    st.write("Introduce los datos medidos en el laboratorio:")
+    tipo_geo = st.selectbox("Geometría", ["Cilíndrica", "Plana"])
+    
+    if tipo_geo == "Cilíndrica":
+        d0 = st.number_input("Diámetro inicial d₀ (mm)", value=10.0)
+        s0 = np.pi * (d0**2) / 4
+    else:
+        ancho = st.number_input("Ancho b (mm)", value=10.0)
+        espesor = st.number_input("Espesor t (mm)", value=2.0)
+        s0 = ancho * espesor
+        
+    l0 = st.number_input("Longitud inicial L₀ (mm)", value=50.0)
+    lu = st.number_input("Longitud final Lᵤ (mm)", value=55.0)
+    su = st.number_input("Sección final en la rotura Sᵤ (mm²)", value=s0*0.8)
+
+# --- PROCESAMIENTO DEL ARCHIVO CSV ---
+uploaded_file = st.file_uploader("Sube el archivo CSV del ensayo", type="csv")
+
+if uploaded_file:
+    # Ajuste para el formato específico: salta la fila 1 y 3, maneja decimales con coma
+    try:
+        # Leemos desde la fila de encabezados (fila 1, índice 1)
+        df = pd.read_csv(uploaded_file, header=1, decimal=',')
+        # Eliminamos la fila de unidades (que quedó como la primera fila de datos)
+        df = df.iloc[1:].reset_index(drop=True)
+        # Convertimos a numérico por si acaso
+        df = df.apply(pd.to_numeric, errors='coerce').dropna()
+        
+        st.success("Archivo procesado con éxito siguiendo el formato de la máquina.")
+    except Exception as e:
+        st.error(f"Error al leer el archivo: {e}")
+        st.stop()
+
+    # Cálculos según Ficha de Tracción CTM [cite: 43, 87]
+    df['Tension_MPa'] = df['Fuerza'] / s0
+    df['Deformacion_unit'] = df['Desplazamiento'] / l0
+    
+    # 1. Resistencia a la tracción (Rm) [cite: 89]
+    rm = df['Tension_MPa'].max()
+    idx_max = df['Tension_MPa'].idxmax()
+    agt = df.loc[idx_max, 'Deformacion_unit'] * 100 # Agt % [cite: 113]
+    
+    # 2. Módulo de Young (E) [cite: 82]
+    # Usamos una regresión en la zona inicial (primera parte de la curva)
+    zona_elastica = df.iloc[:int(len(df)*0.05)] 
+    slope, _, _, _, _ = stats.linregress(zona_elastica['Deformacion_unit'], zona_elastica['Tension_MPa'])
+    e_young = slope # En MPa
+    
+    # 3. Alargamiento a rotura (A %) [cite: 97]
+    a_porc = ((lu - l0) / l0) * 100
+    
+    # 4. Estricción (Z %) [cite: 107]
+    z_porc = ((s0 - su) / s0) * 100
+
+    # --- REPRESENTACIÓN GRÁFICA ---
+    st.subheader("Curva de Tracción (Tensión vs Deformación)")
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(df['Deformacion_unit'], df['Tension_MPa'], label='Ensayo Real', color='blue')
+    ax.set_xlabel("Deformación Unitaria (ε)")
+    ax.set_ylabel("Tensión (MPa)")
+    ax.set_title("Diagrama Tensión-Deformación")
+    ax.grid(True, linestyle='--', alpha=0.7)
+    
+    # Marcamos Rm en la gráfica
+    ax.scatter(df.loc[idx_max, 'Deformacion_unit'], rm, color='red', zorder=5)
+    ax.annotate(f'Rm: {rm:.1f} MPa', (df.loc[idx_max, 'Deformacion_unit'], rm), textcoords="offset points", xytext=(0,10), ha='center')
+    
+    st.pyplot(fig)
+
+    # --- TABLA DE RESULTADOS (INFORME) ---
+    st.subheader("Resultados del Informe de Ensayo")
+    res_data = {
+        "Parámetro": ["Resistencia Máxima (Rm)", "Módulo de Elasticidad (E)", "Alargamiento a Rotura (A)", "Extensión bajo carga máx (Agt)", "Estricción (Z)"],
+        "Símbolo": ["MPa", "GPa", "%", "%", "%"],
+        "Valor": [f"{rm:.2f}", f"{e_young/1000:.2f}", f"{a_porc:.2f}", f"{agt:.2f}", f"{z_porc:.2f}"]
+    }
+    st.table(pd.DataFrame(res_data))
