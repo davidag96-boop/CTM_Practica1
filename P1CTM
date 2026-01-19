@@ -12,6 +12,25 @@ st.title("🚀 Analizador de Ensayos de Tracción - EEAE")
 st.write("Configurado para el formato de salida de la máquina de ensayos (PLA_1H3.csv)")
 
 # --- BARRA LATERAL: ENTRADA DE DATOS DE LA FICHA CTM ---
+st.write("### 1. Carga de Datos del Ensayo")
+
+# Añadimos una opción para usar datos de ejemplo directamente
+usar_ejemplo = st.checkbox("Usar datos de ejemplo (Aluminio 7075-T6)")
+
+if usar_ejemplo:
+    # Estos son los datos resumidos para que el código no sea infinito
+    # En una situación real, aquí cargarías el archivo 'ensayo_7075.csv'
+    uploaded_file = "ensayo_7075_pro.csv" 
+    st.info("Cargando datos preconfigurados de Aluminio Aeroespacial...")
+else:
+    uploaded_file = st.file_uploader("Sube el archivo CSV del ensayo", type="csv")
+
+if uploaded_file:
+    try:
+        # Si es el ejemplo, lo leemos de la carpeta; si no, del uploader
+        df = pd.read_csv(uploaded_file, header=1, decimal=',')
+        df = df.iloc[1:].reset_index(drop=True)
+        df = df.apply(pd.to_numeric, errors='coerce').dropna()
 with st.sidebar:
     st.header("Datos de la Probeta")
     st.write("Introduce los datos medidos en el laboratorio:")
