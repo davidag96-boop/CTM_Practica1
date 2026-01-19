@@ -5,146 +5,122 @@ import matplotlib.pyplot as plt
 from scipy import stats
 from scipy.interpolate import interp1d
 
-# Configuración de la página
-st.set_page_config(page_title="Analizador EEAE UVigo", layout="wide")
+# Configuración de la página con identidad visual de la UVigo
+st.set_page_config(page_title="Analizador de Tracción - EEAE UVigo", layout="wide")
 
-st.title("🚀 Analizador de Ensayos de Tracción - EEAE")
-st.write("Configurado para el formato de salida de la máquina de ensayos (PLA_1H3.csv)")
+st.title("🚀 Analizador de Ensayos de Tracción - Materiales Aeroespaciales")
+st.subheader("Escola de Enxeñaría Aeronáutica e do Espazo | Universidade de Vigo")
 
-# --- BARRA LATERAL: ENTRADA DE DATOS DE LA FICHA CTM ---
-st.write("### 1. Carga de Datos del Ensayo")
-
-# Añadimos una opción para usar datos de ejemplo directamente
-usar_ejemplo = st.checkbox("Usar datos de ejemplo (Aluminio 7075-T6)")
-
-if usar_ejemplo:
-    # Estos son los datos resumidos para que el código no sea infinito
-    # En una situación real, aquí cargarías el archivo 'ensayo_7075.csv'
-    uploaded_file = "ensayo_7075_pro.csv" 
-    st.info("Cargando datos preconfigurados de Aluminio Aeroespacial...")
-else:
-    uploaded_file = st.file_uploader("Sube el archivo CSV del ensayo", type="csv")
-
-if uploaded_file:
-    try:
-        # Si es el ejemplo, lo leemos de la carpeta; si no, del uploader
-        df = pd.read_csv(uploaded_file, header=1, decimal=',')
-        df = df.iloc[1:].reset_index(drop=True)
-        df = df.apply(pd.to_numeric, errors='coerce').dropna()
+# --- SIDEBAR: DATOS DE LA PROBETA (SEGÚN FICHA CTM) ---
 with st.sidebar:
-    st.header("Datos de la Probeta")
-    st.write("Introduce los datos medidos en el laboratorio:")
-    tipo_geo = st.selectbox("Geometría", ["Cilíndrica", "Plana"])
-    
-    if tipo_geo == "Cilíndrica":
+    st.header("Configuración de la Probeta")
+    tipo_probeta = st.selectbox("Geometría de la probeta", ["Cilíndrica", "Plana"])
+
+    if tipo_probeta == "Cilíndrica":
         d0 = st.number_input("Diámetro inicial d₀ (mm)", value=10.0)
         s0 = np.pi * (d0**2) / 4
     else:
         ancho = st.number_input("Ancho b (mm)", value=10.0)
         espesor = st.number_input("Espesor t (mm)", value=2.0)
         s0 = ancho * espesor
-        
-    l0 = st.number_input("Longitud inicial L₀ (mm)", value=50.0)
-    lu = st.number_input("Longitud final Lᵤ (mm)", value=55.0)
-    su = st.number_input("Sección final en la rotura Sᵤ (mm²)", value=s0*0.8)
 
-# --- PROCESAMIENTO DEL ARCHIVO CSV ---
-# --- PROCESAMIENTO DEL ARCHIVO CSV ---
-uploaded_file = st.file_uploader("Sube el archivo CSV del ensayo", type="csv")
+    l0 = st.number_input("Longitud inicial L₀ (mm)", value=50.0)
+    lu = st.number_input("Longitud final tras rotura Lᵤ (mm)", value=55.0)
+    su = st.number_input("Sección final tras rotura Sᵤ (mm²)", value=s0*0.8)
+    material = st.text_input("Identificación del Material", "Aluminio 7075-T6")
+
+    st.divider()
+    st.info(f"**Sección Inicial S₀:** {s0:.2f} mm²")
+
+# --- CARGA Y PROCESAMIENTO ROBUSTO DEL CSV ---
+st.write("### 1. Carga de Datos del Ensayo")
+uploaded_file = st.file_uploader("Sube el archivo CSV (Formato máquina UVigo)", type=["csv"])
 
 if uploaded_file:
     try:
-        # 1. Cargamos el archivo saltando la primera fila de metadatos
-        # header=1 indica que los nombres están en la segunda fila
+        # Leemos saltando la primera fila de metadatos. Decimales con coma.
         df = pd.read_csv(uploaded_file, header=1, decimal=',', skipinitialspace=True)
         
-        # 2. LIMPIEZA CRÍTICA: Eliminamos comillas dobles y espacios en blanco de los encabezados
-        df.columns = df.columns.str.replace('"', '').str.strip()
+        # RENOMBRADO POR POSICIÓN: Evita el KeyError: 'Fuerza'
+        # Fuerza es la columna 1, Desplazamiento es la 2.
+        df.columns = ['Tiempo', 'Fuerza', 'Desplazamiento']
         
-        # 3. Eliminamos la fila de unidades ("seg", "N", "mm") que queda como primera fila de datos
+        # Eliminamos la fila de unidades (seg, N, mm)
         df = df.iloc[1:].reset_index(drop=True)
         
-        # 4. Convertimos a valores numéricos para poder operar matemáticamente
+        # Convertimos todo a numérico
         df = df.apply(pd.to_numeric, errors='coerce').dropna()
         
-        # Verificación de seguridad para el alumno
-        if 'Fuerza' not in df.columns:
-            st.error(f"No se detectó la columna 'Fuerza'. Columnas encontradas: {list(df.columns)}")
-            st.stop()
-            
-        st.success("Archivo cargado y columnas normalizadas correctamente.")
+        st.success("✅ Datos cargados correctamente. Columnas identificadas por posición.")
         
     except Exception as e:
         st.error(f"Error al procesar el archivo: {e}")
         st.stop()
 
-    # Ahora el cálculo de Tensión usará la columna limpia 'Fuerza'
+    # --- CÁLCULOS TÉCNICOS (FICHA CTM) ---
+    # Tensión (σ) = Fuerza / S0
     df['Tension_MPa'] = df['Fuerza'] / s0
-    df['Deformacion_unit'] = df['Desplazamiento'] / l0
-        # COMPROBACIÓN DE SEGURIDAD PARA EL ALUMNO
-        if 'Fuerza' not in df.columns:
-            st.error(f"❌ Error: No encuentro la columna 'Fuerza'. Columnas detectadas: {list(df.columns)}")
-            st.info("Asegúrate de que tu CSV tiene el formato: Tiempo, Fuerza, Desplazamiento")
-            st.stop()
-        
-        st.success("✅ Archivo procesado y columnas normalizadas.")
-        
-    except Exception as e:
-        st.error(f"Error técnico al leer el CSV: {e}")
-        st.stop()
-
-    # Ahora el cálculo no fallará porque hemos limpiado 'Fuerza'
-    df['Tension_MPa'] = df['Fuerza'] / s0
+    # Deformación (ε) = ΔL / L0
     df['Deformacion_unit'] = df['Desplazamiento'] / l0
     
-    # ... resto del código ...
-        
-        st.success("Archivo procesado con éxito siguiendo el formato de la máquina.")
-    except Exception as e:
-        st.error(f"Error al leer el archivo: {e}")
-        st.stop()
-
-    # Cálculos según Ficha de Tracción CTM [cite: 43, 87]
-    df['Tension_MPa'] = df['Fuerza'] / s0
-    df['Deformacion_unit'] = df['Desplazamiento'] / l0
-    
-    # 1. Resistencia a la tracción (Rm) [cite: 89]
+    # 1. Resistencia a la tracción (Rm)
     rm = df['Tension_MPa'].max()
     idx_max = df['Tension_MPa'].idxmax()
-    agt = df.loc[idx_max, 'Deformacion_unit'] * 100 # Agt % [cite: 113]
+    agt = df.loc[idx_max, 'Deformacion_unit'] * 100 # % bajo carga máxima
     
-    # 2. Módulo de Young (E) [cite: 82]
-    # Usamos una regresión en la zona inicial (primera parte de la curva)
-    zona_elastica = df.iloc[:int(len(df)*0.05)] 
+    # 2. Módulo de Young (E) - Regresión en la zona inicial
+    zona_elastica = df.iloc[:int(len(df)*0.08)] 
     slope, _, _, _, _ = stats.linregress(zona_elastica['Deformacion_unit'], zona_elastica['Tension_MPa'])
-    e_young = slope # En MPa
+    e_young = slope # MPa
     
-    # 3. Alargamiento a rotura (A %) [cite: 97]
+    # 3. Límite Elástico Rp0.2 (Paralela al 0.2%)
+    offset = 0.002
+    try:
+        linea_offset = e_young * (df['Deformacion_unit'] - offset)
+        idx_p02 = np.argwhere(np.diff(np.sign(df['Tension_MPa'] - linea_offset))).flatten()[0]
+        rp02 = df.loc[idx_p02, 'Tension_MPa']
+        eps_p02 = df.loc[idx_p02, 'Deformacion_unit']
+    except:
+        rp02 = rm * 0.85 # Estimación si falla la intersección
+        eps_p02 = (rp02/e_young) + offset
+
+    # 4. Alargamiento a rotura (A %) y Estricción (Z %)
     a_porc = ((lu - l0) / l0) * 100
-    
-    # 4. Estricción (Z %) [cite: 107]
     z_porc = ((s0 - su) / s0) * 100
 
-    # --- REPRESENTACIÓN GRÁFICA ---
-    st.subheader("Curva de Tracción (Tensión vs Deformación)")
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.plot(df['Deformacion_unit'], df['Tension_MPa'], label='Ensayo Real', color='blue')
-    ax.set_xlabel("Deformación Unitaria (ε)")
-    ax.set_ylabel("Tensión (MPa)")
-    ax.set_title("Diagrama Tensión-Deformación")
-    ax.grid(True, linestyle='--', alpha=0.7)
-    
-    # Marcamos Rm en la gráfica
-    ax.scatter(df.loc[idx_max, 'Deformacion_unit'], rm, color='red', zorder=5)
-    ax.annotate(f'Rm: {rm:.1f} MPa', (df.loc[idx_max, 'Deformacion_unit'], rm), textcoords="offset points", xytext=(0,10), ha='center')
-    
-    st.pyplot(fig)
+    # --- VISUALIZACIÓN ---
+    col1, col2 = st.columns([2, 1])
 
-    # --- TABLA DE RESULTADOS (INFORME) ---
-    st.subheader("Resultados del Informe de Ensayo")
-    res_data = {
-        "Parámetro": ["Resistencia Máxima (Rm)", "Módulo de Elasticidad (E)", "Alargamiento a Rotura (A)", "Extensión bajo carga máx (Agt)", "Estricción (Z)"],
-        "Símbolo": ["MPa", "GPa", "%", "%", "%"],
-        "Valor": [f"{rm:.2f}", f"{e_young/1000:.2f}", f"{a_porc:.2f}", f"{agt:.2f}", f"{z_porc:.2f}"]
-    }
-    st.table(pd.DataFrame(res_data))
+    with col1:
+        st.subheader("Gráfica: Diagrama Tensión-Deformación")
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.plot(df['Deformacion_unit'], df['Tension_MPa'], label='Curva de Ensayo', color='#004b87', lw=2)
+        
+        # Dibujar Rp0.2
+        ax.plot(df['Deformacion_unit'], e_young*(df['Deformacion_unit']-0.002), '--', color='gray', alpha=0.5, label='Línea Offset 0.2%')
+        ax.scatter(eps_p02, rp02, color='red', s=50, zorder=5, label=f'Rp0.2: {rp02:.1f} MPa')
+        
+        # Dibujar Rm
+        ax.scatter(df.loc[idx_max, 'Deformacion_unit'], rm, color='green', s=50, zorder=5, label=f'Rm: {rm:.1f} MPa')
+        
+        ax.set_xlabel("Deformación Unitaria ε (mm/mm)")
+        ax.set_ylabel("Tensión σ (MPa)")
+        ax.set_ylim(0, rm * 1.15)
+        ax.set_xlim(0, df['Deformacion_unit'].max() * 1.05)
+        ax.legend()
+        ax.grid(True, linestyle=':', alpha=0.6)
+        st.pyplot(fig)
+
+    with col2:
+        st.subheader("Informe de Resultados")
+        res_df = pd.DataFrame({
+            "Propiedad Mecánica": ["Módulo de Young (E)", "Límite Elástico (Rp0.2)", "Resistencia Máxima (Rm)", "Alargamiento (A)", "Estricción (Z)"],
+            "Unidad": ["GPa", "MPa", "MPa", "%", "%"],
+            "Resultado": [f"{e_young/1000:.1f}", f"{rp02:.1f}", f"{rm:.1f}", f"{a_porc:.1f}", f"{z_porc:.1f}"]
+        })
+        st.table(res_df)
+        
+        st.download_button("Descargar Datos Procesados (CSV)", df.to_csv(index=False), "resultados_ensayo.csv", "text/csv")
+
+else:
+    st.info("👋 Sube el archivo de la máquina de ensayos para generar el análisis automático.")
