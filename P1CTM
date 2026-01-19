@@ -49,17 +49,43 @@ with st.sidebar:
     su = st.number_input("Sección final en la rotura Sᵤ (mm²)", value=s0*0.8)
 
 # --- PROCESAMIENTO DEL ARCHIVO CSV ---
+# --- PROCESAMIENTO DEL ARCHIVO CSV ---
 uploaded_file = st.file_uploader("Sube el archivo CSV del ensayo", type="csv")
 
 if uploaded_file:
-    # Ajuste para el formato específico: salta la fila 1 y 3, maneja decimales con coma
     try:
-        # Leemos desde la fila de encabezados (fila 1, índice 1)
-        df = pd.read_csv(uploaded_file, header=1, decimal=',')
-        # Eliminamos la fila de unidades (que quedó como la primera fila de datos)
-        df = df.iloc[1:].reset_index(drop=True)
-        # Convertimos a numérico por si acaso
+        # 1. Leemos el archivo. 
+        # header=1 asume que la fila 1 (Tiempo, Fuerza...) es el encabezado.
+        df = pd.read_csv(uploaded_file, header=1, decimal=',', skipinitialspace=True)
+        
+        # 2. LIMPIEZA CRÍTICA: Quitamos comillas y espacios de los nombres de las columnas
+        df.columns = df.columns.str.replace('"', '').str.strip()
+        
+        # 3. Quitamos la fila de unidades (seg, N, mm) si existe
+        # Verificamos si la primera fila contiene texto (como 'N' o 'mm')
+        if not pd.to_numeric(df.iloc[0, 1], errors='coerce') >= 0:
+            df = df.iloc[1:].reset_index(drop=True)
+
+        # 4. Convertimos todo a números (por si hay decimales con coma mal leídos)
         df = df.apply(pd.to_numeric, errors='coerce').dropna()
+
+        # COMPROBACIÓN DE SEGURIDAD PARA EL ALUMNO
+        if 'Fuerza' not in df.columns:
+            st.error(f"❌ Error: No encuentro la columna 'Fuerza'. Columnas detectadas: {list(df.columns)}")
+            st.info("Asegúrate de que tu CSV tiene el formato: Tiempo, Fuerza, Desplazamiento")
+            st.stop()
+        
+        st.success("✅ Archivo procesado y columnas normalizadas.")
+        
+    except Exception as e:
+        st.error(f"Error técnico al leer el CSV: {e}")
+        st.stop()
+
+    # Ahora el cálculo no fallará porque hemos limpiado 'Fuerza'
+    df['Tension_MPa'] = df['Fuerza'] / s0
+    df['Deformacion_unit'] = df['Desplazamiento'] / l0
+    
+    # ... resto del código ...
         
         st.success("Archivo procesado con éxito siguiendo el formato de la máquina.")
     except Exception as e:
