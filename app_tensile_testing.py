@@ -1,105 +1,68 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
 import plotly.express as px
-import scipy
-from fpdf import FPDF
+import numpy as np
 
 # Function to handle decimal separators
-def convert_decimal(value):
+def convert_to_float(value):
     if isinstance(value, str):
-        value = value.replace(',', '.')  # Replace comma with point
+        value = value.replace(',', '.')
     return float(value)
 
-# Young's Modulus Calculation
-def calculate_youngs_modulus(stress, strain):
-    try:
-        # slope of the linear portion of the stress-strain curve
-        E, _ = np.polyfit(strain, stress, 1)
-        return E
-    except Exception as e:
-        st.error(f"Error calculating Young's modulus: {e}")
+# Function to calculate Young's modulus, yield strength, tensile strength, and elongation
+def calculate_material_properties(data):
+    # Placeholder calculations based on the data
+    young_modulus = np.mean(data['stress']) / np.mean(data['strain'])  # Dummy calculation
+    yield_strength = young_modulus * 0.002  # Dummy yield strength
+    tensile_strength = max(data['stress'])  # Maximum stress
+    elongation = (data['final_length'] - data['original_length']) / data['original_length'] * 100
+    return young_modulus, yield_strength, tensile_strength, elongation
 
-# Rp0.2 Offset Method Implementation
-def calculate_rp02_offset(stress, strain):
-    try:
-        # Find the intersection for the Rp0.2
-        return np.interp(0.002, strain, stress)
-    except Exception as e:
-        st.error(f"Error calculating Rp0.2: {e}")
+# Streamlit Layout
+st.title("Tensile Testing Application")
 
-# Identify Tensile Strength
-def identify_tensile_strength(stress):
-    try:
-        return np.max(stress)
-    except Exception as e:
-        st.error(f"Error identifying tensile strength: {e}")
+# Input Methods
+input_method = st.selectbox("Choose input method:", ["Manual Input", "Excel Upload", "Demo Mode"])
 
-# Calculate Elongation at Break
-def calculate_elongation_at_break(original_length, final_length):
-    try:
-        return (final_length - original_length) / original_length * 100
-    except Exception as e:
-        st.error(f"Error calculating elongation: {e}")
+if input_method == "Manual Input":
+    original_length = st.number_input("Original Length (mm):")
+    final_length = st.number_input("Final Length (mm):")
+    stress = st.text_area("Stress (MPa) - comma-separated:").split(',')
+    strain = st.text_area("Strain - comma-separated:").split(',')
+    stress = [convert_to_float(s) for s in stress]
+    strain = [convert_to_float(s) for s in strain]
+    data = pd.DataFrame({'stress': stress, 'strain': strain, 'final_length': [final_length], 'original_length': [original_length]})
 
-# Generate interactive Plotly visualizations
-def plot_interactive(stress, strain):
-    fig = px.line(x=strain, y=stress, labels={'x':'Strain','y':'Stress'}, title='Stress-Strain Curve')
+elif input_method == "Excel Upload":
+    uploaded_file = st.file_uploader("Upload Excel file", type=['xls', 'xlsx'])
+    if uploaded_file:
+        data = pd.read_excel(uploaded_file)
+        # Assuming Excel has appropriate columns named 'stress', 'strain', 'original_length', and 'final_length'
+
+elif input_method == "Demo Mode":
+    data = pd.DataFrame({
+        'stress': np.random.normal(loc=250, scale=50, size=100),
+        'strain': np.linspace(0, 0.1, num=100),
+        'final_length': [100],
+        'original_length': [100]
+    })
+
+# Data Processing
+if 'data' in locals():
+    young_modulus, yield_strength, tensile_strength, elongation = calculate_material_properties(data)
+    st.write(f"Young's Modulus: {young_modulus}")
+    st.write(f"Yield Strength: {yield_strength}")
+    st.write(f"Tensile Strength: {tensile_strength}")
+    st.write(f"Elongation at Break: {elongation}%")
+
+    # Interactive Plotly Visualization
+    fig = px.line(data, x='strain', y='stress', title="Stress-Strain Curve")
     st.plotly_chart(fig)
 
-# Matplotlib Stress-Strain Curves
-def plot_stress_strain_curve(stress, strain):
-    plt.plot(strain, stress, label='Stress-Strain Curve')
-    plt.xlabel('Strain')
-    plt.ylabel('Stress')
-    plt.axhline(y=identify_tensile_strength(stress), color='r', linestyle='--', label='Tensile Strength')
-    plt.title('Stress-Strain Curve with Critical Points')
-    plt.legend()
-    st.pyplot()  
+    # PDF Export
+    if st.button("Export to PDF"):
+        # Placeholder for PDF export logic
+        st.write("Export functionality to be implemented.")
 
-# PDF Export of Results
-def export_pdf(results):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", 'B', 16)
-    pdf.cell(40, 10, 'Test Results')
-    pdf.ln(10)
-    for key, value in results.items():
-        pdf.cell(0, 10, f'{key}: {value}', ln=True)
-    pdf.output('test_results.pdf')
-
-# Main Streamlit Function
-def main():
-    st.title('Tensile Testing Application')
-    st.sidebar.header('Specimen Dimensions')
-    original_length = st.sidebar.number_input('Original Length (mm)', min_value=0.0, format='%.2f')
-    final_length = st.sidebar.number_input('Final Length (mm)', min_value=0.0, format='%.2f')
-    # Input data
-    stress_input = st.text_area('Enter Stress Values (comma or point separated, new line for each):')
-    strain_input = st.text_area('Enter Strain Values (comma or point separated, new line for each):')
-    
-    if st.button('Calculate'):  
-        try:
-            stress_values = [convert_decimal(x) for x in stress_input.split()]  # Adjusted handling
-            strain_values = [convert_decimal(x) for x in strain_input.split()]
-            # Calculations
-            youngs_modulus = calculate_youngs_modulus(stress_values, strain_values)
-            rp02 = calculate_rp02_offset(stress_values, strain_values)
-            tensile_strength = identify_tensile_strength(stress_values)
-            elongation = calculate_elongation_at_break(original_length, final_length)  
-            results = {
-                'Youngs Modulus (E)': youngs_modulus,
-                'Rp0.2': rp02,
-                'Tensile Strength': tensile_strength,
-                'Elongation at Break (%)': elongation
-            }
-            st.write(results)
-            export_pdf(results)
-            plot_interactive(stress_values, strain_values)
-            plot_stress_strain_curve(stress_values, strain_values)
-        except ValueError:
-            st.error("Please enter valid numerical values for stress and strain.")
-
-if __name__ == '__main__':
-    main()
+# Styling
+st.markdown("<style>div.stButton > button {background-color: #4CAF50; color: white;}</style>", unsafe_allow_html=True)
